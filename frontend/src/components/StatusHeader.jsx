@@ -48,30 +48,17 @@ export default function StatusHeader({ session }) {
         )}
       </div>
 
-      <div className="flex items-center gap-4 ml-auto text-xs">
-        <WalletChip label="Traveller" address={session.wallets.traveller} />
-        <WalletChip label="Agent" address={session.wallets.agent} />
-        <WalletChip label="Airline" address={session.wallets.airline} />
-        {session.escrow && (
-          <a
-            href={session.escrow.explorerUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="pill border transition hover:brightness-95"
-            style={{ background: "rgba(50,96,128,0.08)", color: "var(--navy)", borderColor: "var(--line)" }}
-          >
-            {session.escrow.amountXrp} XRP locked ↗
-          </a>
-        )}
-      </div>
+      {session.escrow && (
+        <a
+          href={session.escrow.explorerUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="pill border transition hover:brightness-95 ml-auto"
+          style={{ background: "rgba(50,96,128,0.08)", color: "var(--navy)", borderColor: "var(--line)" }}
+        >
+          Budget locked on XRPL ↗
+        </a>
+      )}
     </div>
-  );
-}
-
-function WalletChip({ label, address }) {
-  return (
-    <span className="text-slate-500">
-      {label} <span className="font-mono" style={{ color: "var(--navy-deep)" }}>{address.slice(0, 5)}…{address.slice(-4)}</span>
-    </span>
   );
 }

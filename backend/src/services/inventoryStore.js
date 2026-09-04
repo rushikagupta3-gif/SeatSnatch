@@ -188,25 +188,6 @@ class InventoryStore {
     return this.get(offerId);
   }
 
-  /** Force an offer's seat count to an exact value (used by the agent-vs-agent demo to set up a single-seat race). */
-  setSeats(offerId, seats) {
-    const offer = this.offers.get(offerId);
-    if (!offer) return null;
-    offer.seatsRemaining = Math.max(0, seats);
-    const h = this.history.get(offerId);
-    h.push({ t: Date.now(), seatsRemaining: offer.seatsRemaining });
-    if (h.length > 200) h.shift();
-    return this.get(offerId);
-  }
-
-  /** Change an offer's fare price (used by the price-drop micro-refund demo control). */
-  setPrice(offerId, amount) {
-    const offer = this.offers.get(offerId);
-    if (!offer) return null;
-    offer.price = { ...offer.price, amount };
-    return this.get(offerId);
-  }
-
   /** Book (finalize sale of) 1 seat, generating a PNR-like confirmation code. */
   bookSeat(offerId) {
     const offer = this.offers.get(offerId);

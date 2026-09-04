@@ -1,6 +1,6 @@
 import { PlaneIcon } from "./icons.jsx";
 
-export default function TicketCard({ ticket, legLabel, refund }) {
+export default function TicketCard({ ticket, legLabel }) {
   if (!ticket) return null;
   const explorer = `https://testnet.xrpl.org/transactions/${ticket.settlementTxHash}`;
 
@@ -65,27 +65,6 @@ export default function TicketCard({ ticket, legLabel, refund }) {
         >
           View settlement on XRPL Testnet explorer ↗
         </a>
-
-        {refund && (
-          <div className="rounded-xl border p-3 space-y-1.5" style={{ borderColor: "rgba(168,92,50,0.3)", background: "rgba(168,92,50,0.06)" }}>
-            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--chestnut)" }}>
-              Price-drop refund
-            </p>
-            <p className="text-sm" style={{ color: "var(--navy-deep)" }}>
-              The fare dropped after booking — the agent automatically refunded{" "}
-              <span className="font-semibold">${refund.amountUSD}</span> back to your wallet.
-            </p>
-            <a
-              href={refund.explorerUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs underline decoration-dotted"
-              style={{ color: "var(--chestnut)" }}
-            >
-              View refund transaction ↗
-            </a>
-          </div>
-        )}
       </div>
     </div>
   );

@@ -8,7 +8,6 @@ const TYPE_STYLES = {
   ticket: "text-emerald-700 font-semibold",
   error: "text-red-600 font-medium",
   alert: "text-rose-700 font-medium",
-  refund: "text-orange-700 font-semibold",
 };
 
 const TYPE_LABEL = {
@@ -21,7 +20,6 @@ const TYPE_LABEL = {
   ticket: "TICKET",
   error: "ERROR",
   alert: "ALERT",
-  refund: "REFUND",
 };
 
 const TYPE_DOT = {
@@ -34,7 +32,6 @@ const TYPE_DOT = {
   ticket: "bg-emerald-500",
   error: "bg-red-500",
   alert: "bg-rose-500",
-  refund: "bg-orange-600",
 };
 
 function fmtTime(t) {

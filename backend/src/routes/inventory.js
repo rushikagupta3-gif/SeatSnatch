@@ -35,18 +35,3 @@ inventoryRouter.post("/demo/reset", (req, res) => {
   inventoryStore.reset();
   res.json({ offers: inventoryStore.list() });
 });
-
-inventoryRouter.post("/demo/set-seats/:id", (req, res) => {
-  const seats = Number(req.body?.seats ?? 1);
-  const offer = inventoryStore.setSeats(req.params.id, seats);
-  if (!offer) return res.status(404).json({ error: "offer not found" });
-  res.json(offer);
-});
-
-inventoryRouter.post("/demo/price-drop/:id", (req, res) => {
-  const amount = Number(req.body?.amount);
-  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "amount must be a positive number" });
-  const offer = inventoryStore.setPrice(req.params.id, amount);
-  if (!offer) return res.status(404).json({ error: "offer not found" });
-  res.json(offer);
-});

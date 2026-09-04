@@ -3,7 +3,7 @@ import ObjectiveForm from "./components/ObjectiveForm.jsx";
 import ReasoningPanel from "./components/ReasoningPanel.jsx";
 import StatusHeader from "./components/StatusHeader.jsx";
 import TicketCard from "./components/TicketCard.jsx";
-import DemoControls from "./components/DemoControls.jsx";
+import AlertBanner from "./components/AlertBanner.jsx";
 import AuthForm from "./components/AuthForm.jsx";
 import ProfilePage from "./components/ProfilePage.jsx";
 import { LogoMark, PlaneIcon } from "./components/icons.jsx";
@@ -73,6 +73,10 @@ export default function App() {
     setSubmitting(true);
     setError(null);
     try {
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+
       const s = await startSession(objective);
       setSession(s);
       setLog(s.log);
@@ -80,7 +84,12 @@ export default function App() {
       stopStreamRef.current = streamSession(s.id, async (entry) => {
         if (entry.type === "connected") return;
         setLog((prev) => [...prev, entry]);
-        if (["evaluation", "decision", "settlement", "ticket", "error", "refund", "alert"].includes(entry.type)) {
+
+        if (entry.type === "alert" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("SeatSnatch", { body: entry.message, tag: `seatsnatch-alert-${entry.leg || "session"}` });
+        }
+
+        if (["evaluation", "decision", "settlement", "ticket", "error", "alert"].includes(entry.type)) {
           try {
             const fresh = await getSession(s.id);
             setSession(fresh);
@@ -216,12 +225,7 @@ export default function App() {
           {session && <StatusHeader session={session} />}
 
           {session && (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <DemoControls
-                  bookedOfferIds={[session.legs.outbound?.ticket?.offerId, session.legs.return?.ticket?.offerId].filter(Boolean)}
-                />
-              </div>
+            <div className="flex justify-end">
               <button
                 onClick={() => setShowReasoning((v) => !v)}
                 className="pill border transition hover:brightness-95 shrink-0"
@@ -246,15 +250,17 @@ export default function App() {
             (showReasoning ? (
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                 <div className="lg:col-span-2 space-y-6">
-                  <WaitingOrTicket ticket={session.legs.outbound.ticket} refund={session.legs.outbound.refund} />
+                  <AlertBanner alert={session.legs.outbound.lastAlert} />
+                  <WaitingOrTicket ticket={session.legs.outbound.ticket} />
                 </div>
                 <div className="lg:col-span-3 min-h-[500px]">
                   <ReasoningPanel log={log} evaluations={session.legs.outbound.lastEvaluations} status={session.legs.outbound.status} />
                 </div>
               </div>
             ) : (
-              <div className="max-w-xl mx-auto w-full">
-                <WaitingOrTicket ticket={session.legs.outbound.ticket} refund={session.legs.outbound.refund} />
+              <div className="max-w-xl mx-auto w-full space-y-6">
+                <AlertBanner alert={session.legs.outbound.lastAlert} />
+                <WaitingOrTicket ticket={session.legs.outbound.ticket} />
               </div>
             ))
           )}
@@ -264,8 +270,8 @@ export default function App() {
   );
 }
 
-function WaitingOrTicket({ ticket, legLabel, refund }) {
-  if (ticket) return <TicketCard ticket={ticket} legLabel={legLabel} refund={refund} />;
+function WaitingOrTicket({ ticket, legLabel }) {
+  if (ticket) return <TicketCard ticket={ticket} legLabel={legLabel} />;
   return (
     <div className="card p-6 flex flex-col items-center justify-center text-center gap-3 h-full min-h-[220px]">
       <span className="relative flex h-3 w-3">
@@ -290,7 +296,8 @@ function LegColumn({ legKey, legLabel, leg, log, showReasoning }) {
           {legLabel} leg
         </h3>
       </div>
-      <WaitingOrTicket ticket={leg.ticket} legLabel={legLabel} refund={leg.refund} />
+      <AlertBanner alert={leg.lastAlert} />
+      <WaitingOrTicket ticket={leg.ticket} legLabel={legLabel} />
       {showReasoning && (
         <div className="min-h-[420px]">
           <ReasoningPanel log={legLog} evaluations={leg.lastEvaluations} title={`${legLabel} reasoning`} status={leg.status} />

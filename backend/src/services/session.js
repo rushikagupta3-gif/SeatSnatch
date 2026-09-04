@@ -3,11 +3,9 @@ import { inventoryStore } from "./inventoryStore.js";
 import { evaluateOffer, decideAction } from "./scoring.js";
 import { createEscrow, finishEscrow, FINISH_AFTER_BUFFER_SECONDS } from "../xrpl/escrow.js";
 import { sendIOU } from "../xrpl/rlusd.js";
-import { sendXRPPayment } from "../xrpl/payment.js";
 import { loadDemoWallets } from "./walletRegistry.js";
 import { encodePaymentProof } from "./x402.js";
 import { TESTNET_EXPLORER_TX } from "../xrpl/client.js";
-import { toUSD } from "./scoring.js";
 import { cabinMultiplier } from "../data/airlines.js";
 import { getPassengerForBooking, hasCompleteProfile } from "./passenger.js";
 import { db } from "../db/db.js";
@@ -20,9 +18,6 @@ export const MOCK_XRP_USD_RATE = 50;
 const POLL_INTERVAL_MS = 2500;
 const MIN_CONFIDENCE_POLLS = 2; // let depletion rate become readable before acting
 const XRPL_CALL_TIMEOUT_MS = 20000;
-const PRICE_WATCH_INTERVAL_MS = 4000;
-const PRICE_WATCH_MAX_TICKS = 30; // ~2min of post-booking price watching, then gives up
-const MIN_REFUNDABLE_DROP_USD = 1;
 
 // Two legs can submit concurrent XRPL requests over the shared testnet
 // connection; if one ever stalls (network hiccup, congested ledger), this
@@ -82,7 +77,7 @@ function serializeLeg(leg) {
     lastEvaluations: leg.lastEvaluations,
     ticket: leg.ticket,
     ticketPriceUSD: leg.ticketPriceUSD,
-    refund: leg.refund,
+    lastAlert: leg.lastAlert,
   };
 }
 
@@ -119,8 +114,7 @@ function newLegState() {
     ticket: null,
     ticketPriceUSD: null,
     timer: null,
-    priceWatchTimer: null,
-    refund: null,
+    lastAlert: null,
   };
 }
 
@@ -245,17 +239,35 @@ async function tickLeg(session, legKey) {
   const { action, target, reason } = decideAction(evaluations, { pollCount: legState.pollCount, minConfidencePolls: MIN_CONFIDENCE_POLLS });
 
   if (action === "ALERT_USER") {
-    log(
-      session,
-      "alert",
+    // Surface the fares that DO exist but only fail on budget — shown to the
+    // traveller as read-only options, never auto-purchased. Airline-excluded
+    // or sold-out offers aren't "an option you're missing," so they're left
+    // out of this list.
+    const overBudgetOffers = evaluations
+      .filter((e) => e.available && e.airlineAllowed && !e.withinBudget)
+      .sort((a, b) => a.expectedCost - b.expectedCost)
+      .map((e) => ({
+        offerId: e.offerId,
+        availabilityCode: e.availabilityCode,
+        airline: e.airline,
+        flightNumber: e.flightNumber,
+        price: e.price,
+        priceUSD: e.priceUSD,
+        expectedCost: e.expectedCost,
+        seatsRemaining: e.seatsRemaining,
+      }));
+
+    const message =
       reason === "no-inventory"
-        ? "No fares found for this leg."
-        : `No fare fits current budget/airline constraints (remaining budget for this leg: $${budgetCap.toFixed(2)}). Consider raising max price or adding airlines.`,
-      { budgetCap },
-      legKey
-    );
+        ? `At this moment, I could not find any flights for this leg. Still searching.`
+        : `At this moment, I could not find a flight within your $${budgetCap.toFixed(2)} budget for this leg. Still searching.`;
+
+    legState.lastAlert = { message, budgetCap, offers: overBudgetOffers, at: Date.now() };
+    log(session, "alert", message, { budgetCap, overBudgetOffers }, legKey);
     return;
   }
+
+  if (legState.lastAlert) legState.lastAlert = null;
 
   log(
     session,
@@ -412,7 +424,6 @@ async function attemptBooking(session, legKey, target) {
     `INSERT INTO bookings (id, user_id, session_id, leg, offer_id, confirmation_code, settlement_tx_hash, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(nanoid(12), session.userId, session.id, legKey, target.offerId, ticket.confirmationCode, ticket.settlementTxHash, new Date().toISOString());
-  startPriceWatch(session, legKey, target);
 
   const otherKey = legKey === "outbound" ? "return" : "outbound";
   const otherLeg = session.legs[otherKey];
@@ -423,84 +434,9 @@ async function attemptBooking(session, legKey, target) {
   }
 }
 
-/**
- * After a leg books, periodically checks whether the mock airline has since
- * dropped that fare's price (via the demo price-drop control) and, if so,
- * automatically settles a small refund of the difference back to the
- * traveller — a real XRPL transaction (Payment, or an RLUSD issuance for
- * cross-currency legs), gated behind an x402-style trigger condition rather
- * than a human noticing and requesting it.
- */
-function startPriceWatch(session, legKey, bookedTarget) {
-  const legState = session.legs[legKey];
-  let ticks = 0;
-
-  legState.priceWatchTimer = setInterval(async () => {
-    ticks += 1;
-    if (ticks > PRICE_WATCH_MAX_TICKS) {
-      clearInterval(legState.priceWatchTimer);
-      return;
-    }
-
-    const current = inventoryStore.get(bookedTarget.offerId);
-    if (!current) return;
-
-    const currentPriceUSD = toUSD(current.price.amount, current.price.currency) * cabinMultiplier(session.objective.cabinClass);
-    const drop = legState.ticketPriceUSD - currentPriceUSD;
-    if (drop < MIN_REFUNDABLE_DROP_USD) return;
-
-    clearInterval(legState.priceWatchTimer);
-    log(
-      session,
-      "info",
-      `Price drop detected on ${bookedTarget.offerId}: was $${legState.ticketPriceUSD.toFixed(2)}, now $${currentPriceUSD.toFixed(2)}. Issuing automatic micro-refund of $${drop.toFixed(2)}...`,
-      {},
-      legKey
-    );
-
-    try {
-      let refundHash;
-      if (bookedTarget.price.currency !== "USD") {
-        const payment = await withTimeout(
-          sendIOU({
-            fromWallet: session.wallets.airline.wallet,
-            toAddress: session.wallets.traveller.address,
-            issuerAddress: session.wallets.airline.address,
-            amount: drop.toFixed(2),
-          }),
-          XRPL_CALL_TIMEOUT_MS,
-          `${legKey} refund sendIOU`
-        );
-        refundHash = payment.hash;
-      } else {
-        const refundXrp = (drop / MOCK_XRP_USD_RATE).toFixed(2);
-        const payment = await withTimeout(
-          sendXRPPayment({ fromWallet: session.wallets.airline.wallet, toAddress: session.wallets.traveller.address, amountXrp: refundXrp }),
-          XRPL_CALL_TIMEOUT_MS,
-          `${legKey} refund sendXRPPayment`
-        );
-        refundHash = payment.hash;
-      }
-      legState.refund = {
-        amountUSD: Math.round(drop * 100) / 100,
-        hash: refundHash,
-        explorerUrl: TESTNET_EXPLORER_TX(refundHash),
-        at: new Date().toISOString(),
-      };
-      log(session, "refund", `Micro-refund of $${drop.toFixed(2)} settled on XRPL Testnet.`, {
-        hash: refundHash,
-        explorerUrl: TESTNET_EXPLORER_TX(refundHash),
-      }, legKey);
-    } catch (err) {
-      log(session, "error", `Price-drop refund failed: ${err.message}`, {}, legKey);
-    }
-  }, PRICE_WATCH_INTERVAL_MS);
-}
-
 export function stopSession(session) {
   for (const leg of Object.values(session.legs)) {
     if (leg?.timer) clearInterval(leg.timer);
-    if (leg?.priceWatchTimer) clearInterval(leg.priceWatchTimer);
   }
   session.status = "cancelled";
 }
