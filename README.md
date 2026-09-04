@@ -11,7 +11,8 @@ conditions are met. No human clicks "confirm" per transaction.
 |---|---|
 | XRPL Testnet transactions (EscrowCreate/EscrowFinish, IOU Payments) | **Real** — actual Testnet transactions, verifiable on the explorer |
 | x402 "402 Payment Required" flow | **Real** HTTP round-trip (402 → settle → retry with proof), minimal but spec-correct implementation |
-| Flight inventory / fare availability | **Mocked** — a GDS-style in-memory service we built (IATA-style `Y3`/`Y0` availability codes). Real GDS access (Amadeus/Sabre) isn't obtainable in a hackathon window; Amadeus's free sandbox has shut down. |
+| Flight search | **Real API call, test-mode data** — every session searches live via the [Duffel](https://duffel.com) API (`backend/src/services/duffelClient.js`), a real flight-search API with a real key. Duffel's *test mode* returns realistic synthetic offers (mixed with a placeholder "Duffel Airways" carrier alongside real airline names) rather than live bookable seats — this is Duffel's own sanctioned way to develop without touching real airline systems or money, not something we mocked ourselves. No GDS exposes real seat counts competitively, so `seatsRemaining` is synthesized per offer for the live depletion demo (disclosed in code). Falls back to a small built-in mock list if Duffel is unreachable, so a network hiccup never blocks the live demo. |
+| Agent's natural-language reasoning | **Real LLM call** — a real Groq API call (`backend/src/services/groqClient.js`, `openai/gpt-oss-20b`, free tier) generates the agent's plain-English explanation of its choice, shown in the reasoning panel tagged `AI`. This is advisory only: the deterministic scoring engine (below) still decides what actually gets purchased, so a slow/failed LLM call never blocks or changes a real booking — it just means that round has no AI commentary logged. |
 | Layover delay-risk scores | **Mocked** — a small hardcoded dataset of "delay-prone" vs. "punctual" airports. Production would use real on-time performance data. |
 | RLUSD | **Testnet-issued stand-in** — the public RLUSD testnet faucet (tryrlusd.com) wasn't reachable from this build environment and its flow is a manual, captcha-gated web form. Our own "airline" wallet issues a testnet-only IOU using the real RLUSD currency code instead, so the on-chain mechanics (TrustSet, IOU Payment, near-instant finality) are identical to genuine RLUSD — only the issuer differs. This is disclosed in the code and here, not hidden. |
 | Ticket confirmation | **Simulated** — a mock PNR/confirmation code, no real airline booking occurs |
@@ -29,9 +30,10 @@ No real money is used anywhere. XRPL Testnet only.
 /frontend  React (Vite) + Tailwind — objective form, live reasoning panel, ticket confirmation
 ```
 
-Agent decision logic is a deterministic rules/heuristics engine (no LLM call) — this was a
-deliberate choice for demo reliability: zero external-dependency latency or failure risk on
-stage. See `backend/src/services/scoring.js`.
+The actual purchase decision is a deterministic rules/heuristics engine (`backend/src/services/scoring.js`)
+— chosen so the booking itself never depends on LLM latency or output. A real LLM call (Groq) runs
+alongside it purely to generate the agent's natural-language explanation, logged but never gating
+the transaction — see `backend/src/services/groqClient.js`.
 
 ## Setup
 
@@ -42,7 +44,20 @@ cd backend && npm install
 cd ../frontend && npm install
 ```
 
-### 2. Pre-fund demo wallets (run once before the demo, or whenever wallets run low)
+### 2. Add your API keys
+
+Create `backend/.env` (gitignored — never committed) with:
+
+```
+DUFFEL_API_KEY=duffel_test_...   # free at https://duffel.com — no card required
+GROQ_API_KEY=gsk_...             # free at https://console.groq.com — no card required
+```
+
+Both are optional in the sense that the app degrades gracefully without them (falls back to
+built-in mock fares, skips the AI commentary), but the live flight search and the agent's
+natural-language reasoning need them to actually run.
+
+### 3. Pre-fund demo wallets (run once before the demo, or whenever wallets run low)
 
 ```bash
 cd backend
@@ -56,7 +71,7 @@ value) so the live demo never makes a live faucet call.
 Each full demo run spends real XRP/RLUSD from these testnet wallets (escrow release + optional
 RLUSD payment). Re-run `fund-wallets` / `fund-rlusd` if balances run low before a rehearsal.
 
-### 3. Seed the demo account
+### 4. Seed the demo account
 
 ```bash
 cd backend
@@ -68,7 +83,7 @@ fictional passport data (`P0000000`) — use this for the live demo instead of t
 identity documents on stage. Prints the credentials to console for convenience (safe — they're
 fake).
 
-### 4. Pre-warm passport OCR (optional, recommended before a live demo)
+### 5. Pre-warm passport OCR (optional, recommended before a live demo)
 
 The "Scan passport" feature downloads a ~5MB language model on its first use. Run one scan
 locally before going on stage so that download isn't happening live:
@@ -80,7 +95,7 @@ node -e "import('tesseract.js').then(({createWorker}) => createWorker('eng')).th
 
 After this, `backend/eng.traineddata` is cached and every subsequent OCR call is fully offline.
 
-### 5. Run both servers
+### 6. Run both servers
 
 ```bash
 # terminal 1
@@ -103,23 +118,24 @@ Open http://localhost:5173.
    OCR pre-fill, but nothing is ever saved from a scan without an explicit review-and-confirm step.
 1. Fill in the objective form (route, max price, value of a shorter/safer layover) and submit.
    This locks a pre-authorized XRP budget via `EscrowCreate` on XRPL Testnet.
-2. Watch the live reasoning panel: every fare's availability code, expected-cost score (price +
-   layover time cost + layover risk cost), and depletion projection update every ~2.5s.
-3. Use the **Demo controls** to force a fare to deplete on cue (`Deplete offer_X`), live on stage.
-4. When the agent commits to a fare, watch the log: `x402` 402 response → escrow release (or, for
-   the GBP-priced fare, an RLUSD conversion + payment) → retried request → confirmed ticket, with
-   a real XRPL Testnet transaction hash linking to the explorer.
-5. `Reset inventory` restores the seeded fares for another run.
-6. Once a leg is booked, a **"Simulate price drop"** button appears in Demo controls. Click it and
-   within ~4s the agent detects the drop and automatically settles a micro-refund back to the
-   traveller — shown on the ticket card with its own XRPL transaction link.
-7. The full agent reasoning trace (fare-by-fare scoring, depletion projections, and the
-   timestamped event log) is hidden by default so the ticket stays front-and-center — click
+2. The agent runs a real Duffel search for that route/date and starts evaluating the results every
+   ~2.5s: expected-cost score (price + layover time cost + layover risk cost), and a depletion
+   projection per fare (using synthesized seat counts, since no GDS exposes real ones).
+3. If nothing fits the budget/airline filters, a banner explains that plainly and lists the
+   over-budget options (never purchased) — the agent keeps monitoring automatically.
+4. When the agent commits to a fare, a real Groq LLM call generates a short natural-language
+   explanation of the choice (tagged `AI` in the log) — advisory only, it never gates the actual
+   transaction. Then: `x402` 402 response → escrow release (or an RLUSD conversion + payment for a
+   foreign-currency fare) → retried request → confirmed ticket, with a real XRPL Testnet
+   transaction hash linking to the explorer.
+5. The full agent reasoning trace (fare-by-fare scoring, depletion projections, the AI commentary,
+   and the timestamped event log) is hidden by default so the ticket stays front-and-center — click
    **"Show agent reasoning"** to reveal it.
 
 Round-trip, cabin class, multi-airline selection, and free-text notes are also supported from the
-objective form — round-trip runs two legs independently (each with its own reasoning panel) and
-enforces a combined-spend guard so the two legs together can never exceed the authorized budget.
+objective form — round-trip runs two legs independently (each with its own reasoning panel, each
+searched separately via Duffel) and enforces a combined-spend guard so the two legs together can
+never exceed the authorized budget.
 
 ### Optional: secrets for auth/vault
 
@@ -141,7 +157,8 @@ npm run test-escrow   # confirms an EscrowCreate -> EscrowFinish cycle works in 
 - `backend/src/services/scoring.js` — the agent's depletion + expected-value reasoning
 - `backend/src/services/session.js` — the agent's decision loop orchestration
 - `backend/src/services/x402.js` — the 402 Payment Required flow
-- `backend/src/xrpl/payment.js` — plain XRP Payment used for price-drop micro-refunds
+- `backend/src/services/duffelClient.js` — real flight search (Duffel test mode)
+- `backend/src/services/groqClient.js` — real LLM reasoning commentary (Groq)
 - `backend/src/vault/cryptoVault.js` — the Vault-pattern encrypted passport store (see table above)
 - `backend/src/db/db.js` — the general data store (users, non-sensitive profile fields, bookings)
 - `backend/src/services/auth.js` — bcrypt + JWT signup/login

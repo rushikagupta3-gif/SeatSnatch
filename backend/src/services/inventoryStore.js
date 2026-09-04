@@ -177,6 +177,27 @@ class InventoryStore {
     return this.history.get(offerId) ?? [];
   }
 
+  /**
+   * Replaces all offers for one leg with a freshly-fetched set (e.g. real
+   * Duffel search results for this session's route/date) — removes the
+   * seeded mock offers for that leg and seeds fresh depletion history for
+   * the new ones. Used per-session, not globally, so different sessions can
+   * search different routes without stepping on each other... in this
+   * single-process demo store, the most recent search wins for a given leg.
+   */
+  replaceLegOffers(leg, offers) {
+    for (const [id, o] of this.offers) {
+      if (o.leg === leg) {
+        this.offers.delete(id);
+        this.history.delete(id);
+      }
+    }
+    for (const offer of offers) {
+      this.offers.set(offer.id, offer);
+      this.history.set(offer.id, [{ t: Date.now(), seatsRemaining: offer.seatsRemaining }]);
+    }
+  }
+
   /** Decrement seats on an offer (used by demo control + successful bookings). */
   decrementSeats(offerId, by = 1) {
     const offer = this.offers.get(offerId);

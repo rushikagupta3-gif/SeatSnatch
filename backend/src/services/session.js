@@ -9,6 +9,8 @@ import { TESTNET_EXPLORER_TX } from "../xrpl/client.js";
 import { cabinMultiplier } from "../data/airlines.js";
 import { getPassengerForBooking, hasCompleteProfile } from "./passenger.js";
 import { db } from "../db/db.js";
+import { searchDuffelFlights } from "./duffelClient.js";
+import { explainFlightChoice } from "./groqClient.js";
 
 // Mock FX rate for demo purposes only — not a real market rate. Chosen so
 // typical fare prices ($400-700) map to XRP amounts well within a single
@@ -183,6 +185,11 @@ export async function startSession(objective, userId) {
     return session;
   }
 
+  await searchRealFlightsForLeg(session, "outbound", objective.origin, objective.destination, objective.departDate);
+  if (isRoundTrip) {
+    await searchRealFlightsForLeg(session, "return", objective.destination, objective.origin, objective.returnDate);
+  }
+
   session.status = "monitoring";
   log(session, "info", "Agent monitoring loop started — evaluating fares every 2.5s.");
 
@@ -198,6 +205,35 @@ export async function startSession(objective, userId) {
   }
 
   return session;
+}
+
+/**
+ * Searches real (test-mode) flights via Duffel for one leg and swaps them
+ * into the inventory store in place of the seeded mock offers. If Duffel is
+ * unreachable, errors, or returns nothing usable, this falls back to
+ * whatever's already in the mock inventory for that leg rather than
+ * failing the session — a live demo must not go down because a third-party
+ * API hiccupped.
+ */
+async function searchRealFlightsForLeg(session, legKey, origin, destination, date) {
+  log(session, "info", `Searching real flights (Duffel, test mode) for ${origin} → ${destination} on ${date}...`, {}, legKey);
+  try {
+    const offers = await withTimeout(
+      searchDuffelFlights({ origin, destination, departDate: date, leg: legKey }),
+      15000,
+      `${legKey} Duffel search`
+    );
+    inventoryStore.replaceLegOffers(legKey, offers);
+    log(
+      session,
+      "info",
+      `Found ${offers.length} real fares from Duffel for this leg (${[...new Set(offers.map((o) => o.airline.name))].join(", ")}).`,
+      {},
+      legKey
+    );
+  } catch (err) {
+    log(session, "error", `Duffel search failed for this leg (${err.message}) — continuing with fallback mock inventory.`, {}, legKey);
+  }
 }
 
 function preferences(session) {
@@ -301,6 +337,23 @@ async function tickLeg(session, legKey) {
 
   clearInterval(legState.timer);
   legState.status = "attempting";
+
+  // Real LLM reasoning pass (Groq) over the deterministic engine's choice —
+  // this is the agent's own natural-language explanation, genuinely
+  // generated, not scripted. It's advisory: the deterministic engine above
+  // already decided what to buy, so a slow/failed LLM call never blocks the
+  // actual booking — it just means that run has no AI commentary logged.
+  try {
+    const explanation = await withTimeout(
+      explainFlightChoice({ objective: session.objective, evaluations, target }),
+      8000,
+      `${legKey} Groq explanation`
+    );
+    log(session, "ai", explanation, {}, legKey);
+  } catch (err) {
+    log(session, "info", `(AI reasoning unavailable this round: ${err.message})`, {}, legKey);
+  }
+
   attemptBooking(session, legKey, target).catch((err) => {
     log(session, "error", `Booking attempt failed: ${err.message}`, {}, legKey);
     legState.status = "monitoring";
