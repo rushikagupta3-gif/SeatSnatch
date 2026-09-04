@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+backend/src/data/wallets.json
+backend/src/data/*.db
+backend/src/data/*.db-*
+backend/eng.traineddata
+*.log
+.DS_Store

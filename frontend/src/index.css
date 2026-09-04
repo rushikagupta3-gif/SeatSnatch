@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+:root {
+  --cream: #fff1e7;
+  --cream-deep: #fbe4d2;
+  --sky: #b5d2e6;
+  --sky-deep: #8fb8d6;
+  --navy: #326080;
+  --navy-deep: #1f3f56;
+  --chestnut: #a85c32;
+  --chestnut-deep: #8a4823;
+  --ink: #24333e;
+  --line: #dccabb;
+}
+
+* {
+  font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background-color: var(--cream);
+  color: var(--ink);
+  background-image:
+    radial-gradient(ellipse 1100px 600px at 12% -8%, rgba(181, 210, 230, 0.65), transparent 60%),
+    radial-gradient(ellipse 900px 600px at 105% 10%, rgba(168, 92, 50, 0.12), transparent 55%);
+  background-attachment: fixed;
+}
+
+@layer components {
+  .input {
+    @apply w-full bg-white border rounded-lg px-3.5 py-2.5 text-[var(--ink)] text-sm placeholder-slate-400 focus:outline-none focus:ring-2 transition;
+    border-color: var(--line);
+  }
+  .input:focus {
+    border-color: var(--navy);
+    box-shadow: 0 0 0 3px rgba(50, 96, 128, 0.12);
+  }
+
+  .card {
+    @apply bg-white/90 rounded-2xl backdrop-blur-sm shadow-sm;
+    border: 1px solid var(--line);
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sky-deep);
+  border-radius: 8px;
+}
