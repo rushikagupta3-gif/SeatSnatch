@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: seatsnatch-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: JWT_SECRET
+        sync: false
+      - key: VAULT_MASTER_KEY
+        sync: false
+      - key: DUFFEL_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
